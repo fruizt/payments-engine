@@ -5,6 +5,8 @@
 
 use thiserror::Error;
 
+use crate::domain::TxId;
+
 /// Why a CSV row never became a transaction. Counted in `rows_parse_failed_total{reason}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 pub enum ParseError {
@@ -151,6 +153,23 @@ impl Rejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[error("the balance would be too large to represent")]
 pub struct Overflow;
+
+/// A failure of the datastore itself: a system error, not the partner's fault. Counted in
+/// `store_errors_total`; the transaction wasn't applied and nothing was written.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum StoreError {
+    /// An insert used an id that already exists, like a unique-key violation. `verify` already
+    /// rejects duplicates, so this is a second safety net.
+    #[error("transaction {0} already exists")]
+    DuplicateKey(TxId),
+    /// An update pointed at a record that doesn't exist.
+    #[error("transaction {0} doesn't exist")]
+    MissingRecord(TxId),
+    /// The store couldn't be reached. A file or database version can return this; the in-memory
+    /// store never does.
+    #[error("the datastore is unavailable: {0}")]
+    Unavailable(String),
+}
 
 #[cfg(test)]
 mod tests {

@@ -93,7 +93,7 @@ payments-engine/
 │   │   └── chargeback.rs
 │   ├── engine.rs             # the core: process(tx) → Applied | Rejected(reason)
 │   ├── datastore/
-│   │   ├── mod.rs            # Store trait: two reads + one atomic commit(WriteBatch)
+│   │   ├── mod.rs            # Store trait: reads + one atomic commit(WriteBatch)
 │   │   └── memory.rs         # in-memory version: Vec + HashMap for txs, HashMap for clients
 │   ├── metrics/
 │   │   ├── mod.rs            # Metrics trait + Event enum
@@ -229,8 +229,8 @@ the transaction, locked account, enough funds) live in each transaction type's `
     sometimes fail;
   - records are read and written by value. Nothing holds a reference into the storage, because a
     real database can't hand one out;
-  - there are two reads, `get_account` and `get_tx`, and **one write**, `commit`
-    (see [Atomic writes](#atomic-writes)).
+  - there are three reads, `get_account`, `get_tx` and `all_accounts` (once, for the final
+    report), and **one write**, `commit` (see [Atomic writes](#atomic-writes)).
 
 ### Atomic writes
 
