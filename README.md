@@ -98,7 +98,8 @@ payments-engine/
 │   ├── metrics/
 │   │   ├── mod.rs            # Metrics trait + Event enum
 │   │   └── memory.rs         # counters, printed to stderr in Prometheus text format
-│   └── error.rs              # ParseError, Rejection, StoreError
+│   ├── error.rs              # ParseError, Rejection, StoreError
+│   └── test_support.rs       # helpers shared by the unit tests
 └── tests/
     ├── fixtures/             # input CSVs + expected outputs
     ├── assumptions.rs        # one test per documented assumption

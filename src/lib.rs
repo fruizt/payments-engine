@@ -10,3 +10,6 @@ pub mod error;
 pub mod io;
 pub mod metrics;
 pub mod transaction;
+
+#[cfg(test)]
+mod test_support;

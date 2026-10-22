@@ -66,10 +66,6 @@ impl Account {
     ///
     /// Fails if available, held or total would go beyond `max_value()`. Every value stays within
     /// that limit, so the arithmetic itself is always exact.
-    #[allow(
-        dead_code,
-        reason = "called by the lifecycle, which comes in the next commit"
-    )]
     pub(super) fn adjust(
         self,
         available_change: Decimal,
@@ -95,19 +91,11 @@ impl Account {
     }
 
     /// Freezes the account (spec: a chargeback freezes the account immediately).
-    #[allow(
-        dead_code,
-        reason = "called by the lifecycle, which comes in the next commit"
-    )]
     pub(super) fn lock(&mut self) {
         self.locked = true;
     }
 
     /// Marks the account as high-risk (A6).
-    #[allow(
-        dead_code,
-        reason = "called by the lifecycle, which comes in the next commit"
-    )]
     pub(super) fn flag_high_risk(&mut self) {
         self.high_risk = true;
     }
