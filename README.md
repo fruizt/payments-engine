@@ -306,7 +306,7 @@ through a `match` that must cover every variant, so a new error case without a l
 | `invalid_client_id` | `client` is missing or isn't a `u16` |
 | `invalid_tx_id` | `tx` is missing or isn't a `u32` |
 | `missing_amount` | a deposit or withdrawal has no amount |
-| `invalid_amount` | the amount isn't a decimal number, or is too large to represent |
+| `invalid_amount` | the amount isn't a decimal number, or is larger than 10^24 ([A10](#a10-amounts)) |
 | `non_positive_amount` | the amount is zero or negative |
 | `amount_truncated_to_zero` | the amount is positive but becomes 0 when cut to 4 decimal places |
 
@@ -446,8 +446,12 @@ clients is not worse than a smaller one.
 
 - A deposit or withdrawal amount must be greater than zero (`non_positive_amount`).
 - An amount with more than 4 decimal places is **cut** to 4 (rounded toward zero), not rejected and
-  not rounded. Each cut is counted in `amounts_truncated_total`.
+  not rounded. Each cut that drops a non-zero digit is counted in `amounts_truncated_total`
+  (`1.50000` loses nothing, so it isn't counted).
 - An amount that becomes 0 after cutting is rejected (`amount_truncated_to_zero`).
+- An amount is digits with at most one `.` and an optional leading sign (`1`, `1.5`, `+2`, `.25`),
+  and at most 10^24. Anything else is `invalid_amount`. The limit keeps every balance small enough
+  that decimal arithmetic is always exact, never rounded.
 
 **Why.** The spec says to *assume* 4 decimal places. The engine may have many partners sending
 different precision; the API promises 4, but sending more shouldn't break anything. Cutting
