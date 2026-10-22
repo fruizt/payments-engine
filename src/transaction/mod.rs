@@ -16,11 +16,14 @@ mod dispute;
 mod resolve;
 mod withdrawal;
 
+pub use chargeback::Chargeback;
 pub use deposit::Deposit;
+pub use dispute::Dispute;
+pub use resolve::Resolve;
 pub use withdrawal::Withdrawal;
 
-use crate::datastore::WriteBatch;
-use crate::domain::lifecycle::{self, StoredTx, TxKind};
+use crate::datastore::{TxWrite, WriteBatch};
+use crate::domain::lifecycle::{self, Event, Step, StoredTx, TxKind};
 use crate::domain::{Account, ClientId, TxId};
 use crate::error::{Overflow, Rejection};
 
@@ -67,6 +70,9 @@ impl TxType {
 pub enum Transaction {
     Deposit(Deposit),
     Withdrawal(Withdrawal),
+    Dispute(Dispute),
+    Resolve(Resolve),
+    Chargeback(Chargeback),
 }
 
 impl Transaction {
@@ -74,6 +80,9 @@ impl Transaction {
         match self {
             Self::Deposit(_) => TxType::Deposit,
             Self::Withdrawal(_) => TxType::Withdrawal,
+            Self::Dispute(_) => TxType::Dispute,
+            Self::Resolve(_) => TxType::Resolve,
+            Self::Chargeback(_) => TxType::Chargeback,
         }
     }
 
@@ -81,6 +90,9 @@ impl Transaction {
         match self {
             Self::Deposit(t) => t.client,
             Self::Withdrawal(t) => t.client,
+            Self::Dispute(t) => t.client,
+            Self::Resolve(t) => t.client,
+            Self::Chargeback(t) => t.client,
         }
     }
 
@@ -90,6 +102,9 @@ impl Transaction {
         match self {
             Self::Deposit(t) => t.tx,
             Self::Withdrawal(t) => t.tx,
+            Self::Dispute(t) => t.tx,
+            Self::Resolve(t) => t.tx,
+            Self::Chargeback(t) => t.tx,
         }
     }
 
@@ -98,10 +113,14 @@ impl Transaction {
         match self {
             Self::Deposit(t) => run(t, snap),
             Self::Withdrawal(t) => run(t, snap),
+            Self::Dispute(t) => run(t, snap),
+            Self::Resolve(t) => run(t, snap),
+            Self::Chargeback(t) => run(t, snap),
         }
     }
 
     /// The record a rejected deposit or withdrawal still leaves, so its id stays taken (A7).
+    /// `None` for the other types: they refer to a record instead of creating one.
     pub fn rejected_record(&self) -> Option<StoredTx> {
         match self {
             Self::Deposit(t) => Some(lifecycle::rejected(
@@ -116,6 +135,7 @@ impl Transaction {
                 t.client,
                 t.amount,
             )),
+            Self::Dispute(_) | Self::Resolve(_) | Self::Chargeback(_) => None,
         }
     }
 }
@@ -169,6 +189,39 @@ fn ensure_unlocked(account: &Account) -> Result<(), Rejection> {
     } else {
         Ok(())
     }
+}
+
+/// What `verify` hands to `apply` for dispute, resolve and chargeback.
+type StepChecked = (Account, StoredTx, Step);
+
+/// A3: the referenced transaction must exist and belong to the row's client.
+fn referenced_tx(client: ClientId, snap: &Snapshot) -> Result<StoredTx, Rejection> {
+    let tx = snap.stored_tx.ok_or(Rejection::TxNotFound)?;
+    if tx.client() != client {
+        return Err(Rejection::ClientMismatch);
+    }
+    Ok(tx)
+}
+
+/// The `verify` of dispute, resolve and chargeback: the checks on the row and the account, then
+/// the lifecycle decides whether the referenced transaction can take this step.
+fn verify_step(
+    client: ClientId,
+    snap: Snapshot,
+    event: Event,
+) -> Result<Verified<StepChecked>, Rejection> {
+    let tx = referenced_tx(client, &snap)?; // tx_not_found, client_mismatch (A3)
+    ensure_unlocked(&snap.account)?; // account_locked (A4)
+    let step = lifecycle::next(&tx, event)?; // not_disputable (A2) and every state rule
+    Ok(Verified((snap.account, tx, step)))
+}
+
+/// The `apply` of dispute, resolve and chargeback: the lifecycle takes the step.
+fn apply_step(
+    Verified((account, tx, step)): Verified<StepChecked>,
+) -> Result<WriteBatch, Overflow> {
+    let (account, tx) = lifecycle::advance(account, tx, step)?;
+    Ok(WriteBatch::new(account, TxWrite::Update(tx)))
 }
 
 #[cfg(test)]
