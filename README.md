@@ -325,7 +325,7 @@ through a `match` that must cover every variant, so a new error case without a l
 | `already_resolved` | dispute | the referenced tx was disputed and resolved before ([A5](#a5-a-resolved-transaction-cant-be-disputed-again-for-now)) |
 | `already_charged_back` | dispute, resolve, chargeback | the referenced tx was charged back |
 | `not_under_dispute` | resolve, chargeback | the referenced tx isn't under dispute |
-| `balance_overflow` | any that changes a balance | the new balance would be too large to represent |
+| `balance_overflow` | any that changes a balance | available, held or total would go beyond ±10^24 ([A10](#a10-amounts)) |
 
 Checks run in a fixed order, so each rejection gets exactly one reason. First the row must match
 our records (a new id, or a referenced transaction that exists and belongs to this client), then

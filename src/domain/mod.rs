@@ -9,6 +9,8 @@ use rust_decimal::Decimal;
 
 use crate::error::ParseError;
 
+pub use account::Account;
+
 /// Decimal places the engine works with.
 pub const SCALE: u32 = 4;
 
