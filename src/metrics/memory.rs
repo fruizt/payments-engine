@@ -1,0 +1,1 @@
+//! Counters kept in memory.
