@@ -222,7 +222,7 @@ fn move_money(account: Account, money: Money, amount: Amount) -> Result<Account,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{amount, dec};
+    use crate::test_support::{amount, dec, take};
 
     fn record(kind: TxKind, state: TxState) -> StoredTx {
         StoredTx {
@@ -243,11 +243,6 @@ mod tests {
             amount("10"),
         )
         .unwrap()
-    }
-
-    fn take(account: Account, tx: StoredTx, event: Event) -> (Account, StoredTx) {
-        let step = next(&tx, event).unwrap();
-        advance(account, tx, step).unwrap()
     }
 
     #[test]
