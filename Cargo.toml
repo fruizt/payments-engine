@@ -1,6 +1,6 @@
 [package]
 name = "payments-engine"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "A small payments engine: transactions CSV in, client accounts CSV out."
 publish = false
