@@ -72,6 +72,33 @@ fn disputes_resolves_and_chargebacks() {
 }
 
 #[test]
+fn a_locked_account_rejects_deposits_and_withdrawals_but_follows_its_disputes() {
+    // Client 1 is locked by the chargeback of tx 1. After that, its deposit and withdrawal are
+    // rejected, but tx 2's open dispute is resolved, tx 3 is disputed and charged back, and a
+    // second chargeback of tx 1 is refused as already charged back. Client 2 isn't affected.
+    let metrics = assert_fixture("locked_account");
+    for rejection in [
+        r#"transactions_rejected_total{type="deposit",reason="account_locked"} 1"#,
+        r#"transactions_rejected_total{type="withdrawal",reason="account_locked"} 1"#,
+        r#"transactions_rejected_total{type="chargeback",reason="already_charged_back"} 1"#,
+    ] {
+        assert_contains(&metrics, rejection);
+    }
+    assert_contains(&metrics, r#"transactions_applied_total{type="dispute"} 4"#);
+    assert_contains(&metrics, r#"transactions_applied_total{type="resolve"} 1"#);
+    assert_contains(
+        &metrics,
+        r#"transactions_applied_total{type="chargeback"} 2"#,
+    );
+    for reason in ["dispute", "resolve"] {
+        assert!(
+            !metrics.contains(&format!("{{type=\"{reason}\",reason=\"account_locked\"}}")),
+            "{reason} was rejected as locked:\n{metrics}"
+        );
+    }
+}
+
+#[test]
 fn bad_rows_fail_open() {
     let metrics = assert_fixture("bad_rows");
     assert_contains(&metrics, "rows_read_total 10");
