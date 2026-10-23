@@ -51,6 +51,8 @@ pub fn run(
     metrics: &mut impl Metrics,
 ) -> Result<(), RunError> {
     let mut engine = Engine::new(MemoryStore::default());
+    // A1: the file order is the chronological order, so each row is processed as it's read, one
+    // at a time, before the next one is looked at.
     for row in TransactionReader::new(input)? {
         let row = row?;
         metrics.record(Event::RowRead);
