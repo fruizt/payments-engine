@@ -8,7 +8,7 @@ use crate::error::Overflow;
 /// A client's account.
 ///
 /// `total` isn't stored: it's always `available + held`, so the three numbers can never disagree.
-/// The balances change only through [`Account::adjust`], which only code inside `domain` can
+/// The balances change only through `adjust`, which only code inside `domain` can
 /// call. In practice that's the lifecycle, the single source of truth for which money moves when.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Account {

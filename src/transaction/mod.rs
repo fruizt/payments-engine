@@ -8,7 +8,7 @@
 //!
 //! Neither one touches the datastore: the engine loads the snapshot and commits the batch. What a
 //! step does to a stored transaction and to the balances is decided by the
-//! [lifecycle](crate::domain::lifecycle); the checks here are about the row and the account.
+//! [lifecycle]; the checks here are about the row and the account.
 
 mod chargeback;
 mod deposit;

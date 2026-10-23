@@ -83,7 +83,7 @@ payments-engine/
 │   │   ├── account.rs        # Account: balances + one overflow-checked adjust()
 │   │   └── lifecycle.rs      # single source of truth: states, steps, money per step
 │   ├── io/
-│   │   ├── reader.rs         # CSV → stream of Result<Transaction, ParseError>
+│   │   ├── reader.rs         # CSV → one row at a time: a transaction or a ParseError
 │   │   └── writer.rs         # accounts → CSV on stdout
 │   ├── transaction/
 │   │   ├── mod.rs            # Transaction enum + the verify/apply trait
@@ -318,6 +318,9 @@ through a `match` that must cover every variant, so a new error case without a l
 | `non_positive_amount` | the amount is zero or negative |
 | `amount_truncated_to_zero` | the amount is positive but becomes 0 when cut to 4 decimal places |
 
+Fields are checked in the order type, client, tx, amount, so a row with several broken fields is
+counted once, under the first one.
+
 **Rejections.** A valid transaction that the rules refuse.
 
 | Reason | Applies to | Meaning |
@@ -510,9 +513,16 @@ are weighted so that disputes, resolves and chargebacks usually point at real tr
     running the whole file, as long as no tx id is used by two different clients (a reused id is
     rejected as a duplicate in the full run but not in the filtered one).
 
+After every step the tests also check that a transaction never touched another client's account
+(A3).
+
 Invariant 1 holds by construction, because `total` is calculated, never stored; the tests still
 check it on the output. Invariant 2 is also checked at runtime with `debug_assert!`, so every debug
 test run catches a violation where it happens.
+
+To make sure the property tests can actually fail, two bugs were planted and then reverted: a
+resolve that doesn't release the held funds, and a missing client-mismatch check. Both were
+caught, the second one also in a release build, where the debug assertions are off.
 
 ## Testing
 
@@ -531,6 +541,8 @@ test run catches a violation where it happens.
 
 ```sh
 cargo test
+# a longer run of the property tests
+PROPTEST_CASES=10000 cargo test --release --test invariants
 ```
 
 ## Dependencies
@@ -548,10 +560,12 @@ cargo test
 
 - **Withdrawal disputes** with the "flag only" model ([A2](#a2-only-deposits-can-be-disputed)).
 - **Disputing again** with a limit per transaction ([A5](#a5-a-resolved-transaction-cant-be-disputed-again-for-now)).
-- **Memory at scale.** Memory grows with the stored transactions, not with the file. At the `u32`
-  limit (about 4.3 billion transactions) and roughly 40 bytes per stored transaction, that's well over
-  100 GB. Smaller records (for example amounts as a fixed-point `i64` instead of a 16-byte decimal)
-  and a disk-backed `Store` would fix this without touching the engine.
+- **Memory at scale.** Memory grows with the stored transactions, not with the file. In a quick
+  test, a release build processed 2 million random rows (57 MB) in about 2 seconds with a peak of
+  about 90 MB for 1.7 million stored deposits and withdrawals: about 55 bytes each. At the `u32`
+  limit (about 4.3 billion transactions) that's over 200 GB. Smaller records (for example amounts
+  as a fixed-point `i64` instead of a 16-byte decimal, and a `u32` position in the index) and a
+  disk-backed `Store` would fix this without touching the engine.
 - **Concurrency.** For thousands of concurrent streams, clients can be split across workers by
   client id. Thanks to [A3](#a3-only-the-owner-of-a-transaction-can-dispute-resolve-or-charge-it-back), a transaction only touches its own client, so each
   worker owns its clients and needs no locks. The one shared piece is checking that tx ids are
