@@ -38,11 +38,39 @@ mod tests {
     use crate::datastore::TxWrite;
     use crate::domain::Account;
     use crate::domain::lifecycle::{self, StoredTx, TxKind, TxState};
-    use crate::test_support::{amount, dec, funded, take};
+    use crate::test_support::{amount, dec, funded, locked_after_chargeback, take};
     use crate::transaction::Transaction;
 
     fn chargeback(client: u16, tx: u32) -> Transaction {
         Transaction::Chargeback(Chargeback::new(ClientId(client), TxId(tx)))
+    }
+
+    #[test]
+    fn a4_a_locked_account_can_be_charged_back_again() {
+        let (locked, _, open) = locked_after_chargeback(ClientId(1));
+        let (locked, disputed) = take(locked, open, Event::Dispute);
+        let snap = Snapshot {
+            account: locked,
+            stored_tx: Some(disputed),
+        };
+        let account = chargeback(1, 2).evaluate(snap).unwrap().account.unwrap();
+        assert_eq!(account.available(), dec("0"));
+        assert_eq!(account.held(), dec("0"));
+        assert_eq!(account.total(), dec("0"));
+        assert!(account.is_locked());
+    }
+
+    #[test]
+    fn rejects_a_second_chargeback_of_the_same_deposit() {
+        let (locked, charged_back, _) = locked_after_chargeback(ClientId(1));
+        let snap = Snapshot {
+            account: locked,
+            stored_tx: Some(charged_back),
+        };
+        assert_eq!(
+            chargeback(1, 1).evaluate(snap),
+            Err(Rejection::AlreadyChargedBack)
+        );
     }
 
     /// Client `client` with 10.0 (tx 1) and 5.0 (tx 2) deposited, and tx 1 under dispute.

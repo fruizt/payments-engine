@@ -124,26 +124,56 @@ fn a03_chargeback_on_other_clients_tx_is_rejected() {
 }
 
 #[test]
-fn a04_a_locked_account_rejects_everything() {
+fn a04_a_locked_account_rejects_deposits_and_withdrawals() {
     let run = process(
         "deposit,1,1,10.0\n\
          deposit,1,2,5.0\n\
          dispute,1,1,\n\
          chargeback,1,1,\n\
          deposit,1,3,1.0\n\
-         withdrawal,1,4,1.0\n\
-         dispute,1,2,\n\
-         resolve,1,2,\n\
-         chargeback,1,2,\n",
+         withdrawal,1,4,1.0\n",
     );
-    for tx_type in TxType::ALL {
+    assert_eq!(run.rejected(TxType::Deposit, Rejection::AccountLocked), 1);
+    assert_eq!(
+        run.rejected(TxType::Withdrawal, Rejection::AccountLocked),
+        1
+    );
+    assert_eq!(run.account(1), ("5.0000", "0.0000", "5.0000", true));
+}
+
+#[test]
+fn a04_a_locked_account_still_follows_its_disputes() {
+    let run = process(
+        "deposit,1,1,100.0\n\
+         deposit,1,2,50.0\n\
+         deposit,1,3,30.0\n\
+         dispute,1,1,\n\
+         dispute,1,2,\n\
+         chargeback,1,1,\n\
+         resolve,1,2,\n\
+         dispute,1,3,\n\
+         chargeback,1,3,\n\
+         chargeback,1,1,\n",
+    );
+    // The chargeback of tx 1 locks the account. Tx 2's dispute, open before the lock, is still
+    // resolved, and tx 3 is still disputed and charged back after it.
+    for tx_type in [TxType::Dispute, TxType::Resolve, TxType::Chargeback] {
         assert_eq!(
             run.rejected(tx_type, Rejection::AccountLocked),
-            1,
+            0,
             "{tx_type:?}"
         );
     }
-    assert_eq!(run.account(1), ("5.0000", "0.0000", "5.0000", true));
+    assert_eq!(run.metrics.count(Event::Applied(TxType::Dispute)), 3);
+    assert_eq!(run.metrics.count(Event::Applied(TxType::Resolve)), 1);
+    assert_eq!(run.metrics.count(Event::Applied(TxType::Chargeback)), 2);
+    // Charging back tx 1 a second time is refused for what it is.
+    assert_eq!(
+        run.rejected(TxType::Chargeback, Rejection::AlreadyChargedBack),
+        1
+    );
+    // 180 deposited, 100 and 30 charged back, nothing left on hold.
+    assert_eq!(run.account(1), ("50.0000", "0.0000", "50.0000", true));
 }
 
 #[test]

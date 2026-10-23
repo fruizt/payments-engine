@@ -229,10 +229,21 @@ fn check_step(tx: &Transaction, outcome: Outcome, before: &State, after: &State)
         );
     }
 
-    // 7. A locked account never changes again.
+    // 7. A locked account stays locked, and only the dispute process can change it (A4).
     for (client, was) in &before.accounts {
         if was.is_locked() {
-            assert_eq!(&after.accounts[client], was, "{tx:?}");
+            let now = &after.accounts[client];
+            assert!(now.is_locked(), "{tx:?} unlocked the account");
+            if now != was {
+                let dispute_process = matches!(
+                    tx,
+                    Transaction::Dispute(_) | Transaction::Resolve(_) | Transaction::Chargeback(_)
+                );
+                assert!(
+                    dispute_process && matches!(outcome, Outcome::Applied { .. }),
+                    "{tx:?} changed a locked account ({outcome:?})"
+                );
+            }
         }
     }
 

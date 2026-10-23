@@ -38,11 +38,26 @@ mod tests {
     use crate::datastore::TxWrite;
     use crate::domain::Account;
     use crate::domain::lifecycle::{StoredTx, TxState};
-    use crate::test_support::{dec, funded, take};
+    use crate::test_support::{dec, funded, locked_after_chargeback, take};
     use crate::transaction::Transaction;
 
     fn resolve(client: u16, tx: u32) -> Transaction {
         Transaction::Resolve(Resolve::new(ClientId(client), TxId(tx)))
+    }
+
+    #[test]
+    fn a4_a_dispute_on_a_locked_account_can_still_be_resolved() {
+        let (locked, _, open) = locked_after_chargeback(ClientId(1));
+        let (locked, disputed) = take(locked, open, Event::Dispute);
+        let snap = Snapshot {
+            account: locked,
+            stored_tx: Some(disputed),
+        };
+        let account = resolve(1, 2).evaluate(snap).unwrap().account.unwrap();
+        // The funds are released, but stay in an account the client can't withdraw from.
+        assert_eq!(account.available(), dec("5"));
+        assert_eq!(account.held(), dec("0"));
+        assert!(account.is_locked());
     }
 
     /// Client `client` with one 10.0 deposit (tx 1) under dispute.

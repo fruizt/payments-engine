@@ -182,7 +182,7 @@ fn ensure_new_id(snap: &Snapshot) -> Result<(), Rejection> {
     }
 }
 
-/// A4: a locked account rejects every transaction.
+/// A4: a locked account rejects deposits and withdrawals, the client's own money moves.
 fn ensure_unlocked(account: &Account) -> Result<(), Rejection> {
     if account.is_locked() {
         Err(Rejection::AccountLocked)
@@ -203,15 +203,19 @@ fn referenced_tx(client: ClientId, snap: &Snapshot) -> Result<StoredTx, Rejectio
     Ok(tx)
 }
 
-/// The `verify` of dispute, resolve and chargeback: the checks on the row and the account, then
-/// the lifecycle decides whether the referenced transaction can take this step.
+/// The `verify` of dispute, resolve and chargeback: the referenced transaction must be the
+/// client's own, then the lifecycle decides whether it can take this step.
+///
+/// A4: there's no lock check here. These rows are the dispute process, run by the partner or the
+/// bank, and must be recorded even on a locked account. Rejecting them wouldn't stop the money
+/// from moving outside the engine; it would only make the records wrong. None of them lets the
+/// client take money out.
 fn verify_step(
     client: ClientId,
     snap: Snapshot,
     event: Event,
 ) -> Result<Verified<StepChecked>, Rejection> {
     let tx = referenced_tx(client, &snap)?; // tx_not_found, client_mismatch (A3)
-    ensure_unlocked(&snap.account)?; // account_locked (A4)
     let step = lifecycle::next(&tx, event)?; // not_disputable (A2) and every state rule
     Ok(Verified((snap.account, tx, step)))
 }

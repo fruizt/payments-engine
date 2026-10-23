@@ -38,7 +38,7 @@ mod tests {
     use crate::datastore::TxWrite;
     use crate::domain::Account;
     use crate::domain::lifecycle::{self, StoredTx, TxKind, TxState};
-    use crate::test_support::{amount, dec, funded, locked_account};
+    use crate::test_support::{amount, dec, funded, locked_account, locked_after_chargeback};
     use crate::transaction::Transaction;
 
     fn dispute(client: u16, tx: u32) -> Transaction {
@@ -80,10 +80,25 @@ mod tests {
     }
 
     #[test]
-    fn a4_rejects_a_locked_account() {
-        let (_, deposit) = funded(ClientId(1), 1, "10");
-        let snap = snapshot(locked_account(ClientId(1)), Some(deposit));
-        assert_eq!(dispute(1, 1).evaluate(snap), Err(Rejection::AccountLocked));
+    fn a4_a_locked_account_can_still_be_disputed() {
+        let (locked, _, open) = locked_after_chargeback(ClientId(1));
+        let batch = dispute(1, 2)
+            .evaluate(snapshot(locked, Some(open)))
+            .unwrap();
+        let account = batch.account.unwrap();
+        assert_eq!(account.available(), dec("0"));
+        assert_eq!(account.held(), dec("5"));
+        assert!(account.is_locked());
+    }
+
+    #[test]
+    fn rejects_a_dispute_after_the_chargeback() {
+        let (locked, charged_back, _) = locked_after_chargeback(ClientId(1));
+        let snap = snapshot(locked, Some(charged_back));
+        assert_eq!(
+            dispute(1, 1).evaluate(snap),
+            Err(Rejection::AlreadyChargedBack)
+        );
     }
 
     #[test]
@@ -96,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn checks_the_reference_before_the_lock() {
+    fn a3_a_locked_account_still_cant_dispute_another_clients_transaction() {
         let locked = locked_account(ClientId(1));
         assert_eq!(
             dispute(1, 1).evaluate(snapshot(locked, None)),
