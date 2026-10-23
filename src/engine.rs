@@ -187,16 +187,29 @@ mod tests {
     }
 
     #[test]
-    fn a4_after_a_chargeback_the_account_rejects_everything() {
+    fn a4_a_locked_account_rejects_deposits_and_withdrawals_but_follows_its_disputes() {
         let mut engine = engine();
         engine.process(&deposit(1, 1, "10")).unwrap();
+        engine.process(&deposit(1, 2, "5")).unwrap();
         engine.process(&dispute(1, 1)).unwrap();
         assert_eq!(engine.process(&chargeback(1, 1)), Ok(APPLIED));
         assert!(account(&engine, 1).is_locked());
+
         assert_eq!(
-            engine.process(&deposit(1, 2, "5")),
+            engine.process(&deposit(1, 3, "5")),
             rejected(Rejection::AccountLocked)
         );
+        assert_eq!(
+            engine.process(&withdrawal(1, 4, "1")),
+            rejected(Rejection::AccountLocked)
+        );
+
+        assert_eq!(engine.process(&dispute(1, 2)), Ok(APPLIED));
+        assert_eq!(record(&engine, 2).state(), TxState::Disputed);
+        assert_eq!(engine.process(&resolve(1, 2)), Ok(APPLIED));
+        let account = account(&engine, 1);
+        assert_eq!((account.available(), account.held()), (dec("5"), dec("0")));
+        assert!(account.is_locked());
     }
 
     #[test]

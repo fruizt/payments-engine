@@ -52,7 +52,8 @@ impl Account {
         self.available + self.held
     }
 
-    /// Locked by a chargeback. Every later transaction for this client is rejected (A4).
+    /// Locked by a chargeback. Later deposits and withdrawals for this client are rejected, while
+    /// disputes, resolves and chargebacks still go through (A4).
     pub fn is_locked(&self) -> bool {
         self.locked
     }

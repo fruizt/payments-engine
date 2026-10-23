@@ -71,7 +71,8 @@ impl ParseError {
 /// no.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 pub enum Rejection {
-    /// Any type: the client's account is locked (A4).
+    /// Deposit or withdrawal: the client's account is locked (A4). Disputes, resolves and
+    /// chargebacks still go through on a locked account.
     #[error("the account is locked")]
     AccountLocked,
     /// Withdrawal: available funds are less than the amount.
@@ -98,10 +99,8 @@ pub enum Rejection {
     /// Dispute: the referenced transaction was disputed and resolved before (A5).
     #[error("the referenced transaction was already disputed and resolved")]
     AlreadyResolved,
-    /// Dispute, resolve or chargeback: the referenced transaction was charged back.
-    ///
-    /// Unreachable today, because a chargeback locks the account and `AccountLocked` is checked
-    /// first. Kept so the lifecycle covers every state.
+    /// Dispute, resolve or chargeback: the referenced transaction was already charged back, for
+    /// example a second chargeback of the same deposit.
     #[error("the referenced transaction was charged back")]
     AlreadyChargedBack,
     /// Resolve or chargeback: the referenced transaction isn't under dispute.

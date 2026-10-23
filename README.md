@@ -12,7 +12,7 @@ the final state of every account as CSV.
   balance change, and the compiler makes sure nothing else can.
 - **All or nothing.** Everything one transaction writes is committed in one atomic step.
 - **Exact money.** Decimals, never floating point. Extra decimal places are cut, never rounded up.
-- **Tested.** 135 tests, including one per documented assumption and property tests that check 10
+- **Tested.** 141 tests, including one per documented assumption and property tests that check 10
   invariants after every step.
 
 ## Contents
@@ -407,7 +407,7 @@ stays taken (A7).
 
 | Reason | Applies to | Meaning |
 |---|---|---|
-| `account_locked` | all | the client's account is locked ([A4](#a4-a-locked-account-rejects-everything)) |
+| `account_locked` | deposit, withdrawal | the client's account is locked ([A4](#a4-a-locked-account-rejects-deposits-and-withdrawals)) |
 | `insufficient_funds` | withdrawal | available < amount |
 | `duplicate_tx_id` | deposit, withdrawal | the tx id was already used ([A7](#a7-transaction-ids-are-unique-even-for-rejected-transactions)) |
 | `tx_not_found` | dispute, resolve, chargeback | no stored transaction has that id |
@@ -421,23 +421,23 @@ stays taken (A7).
 | `balance_overflow` | any that changes a balance | available, held or total would go beyond ±10^24 ([A10](#a10-amounts)) |
 
 Checks run in a fixed order, so each rejection gets exactly one reason. First the row must match
-our records (a new id, or a referenced transaction that exists and belongs to this client), then
-the account must not be locked, then the rules of the transaction itself apply:
+our records (a new id, or a referenced transaction that exists and belongs to this client), then,
+for deposits and withdrawals, the account must not be locked, then the rules of the transaction
+itself apply:
 
 - **Deposit / withdrawal:** `duplicate_tx_id` → `account_locked` → `insufficient_funds` →
   `balance_overflow`.
-- **Dispute / resolve / chargeback:** `tx_not_found` → `client_mismatch` → `account_locked` →
-  `not_disputable` (dispute only) → state of the referenced transaction (`tx_rejected`,
-  `already_disputed`, `already_resolved`, `already_charged_back`, `not_under_dispute`) →
-  `balance_overflow`.
+- **Dispute / resolve / chargeback:** `tx_not_found` → `client_mismatch` → `not_disputable`
+  (dispute only) → state of the referenced transaction (`tx_rejected`, `already_disputed`,
+  `already_resolved`, `already_charged_back`, `not_under_dispute`) → `balance_overflow`. There's
+  no lock check: these still go through on a locked account (A4).
 
 For dispute, resolve and chargeback, `not_disputable` and the state checks come from the
 [lifecycle table](#transaction-lifecycle).
 
-`already_charged_back` can't actually happen today: a chargeback locks the account, so any later
-row from that client stops at `account_locked` before the state check, and rows from other clients
-stop at `client_mismatch`. It's kept so the state check covers every state, and it becomes
-reachable if accounts can ever be unlocked.
+`already_charged_back` comes up when a transaction that was already charged back is disputed,
+resolved or charged back again. That's possible because a locked account still follows the
+dispute process (A4).
 
 ### Store errors
 
@@ -494,7 +494,7 @@ Some choices accept a risk on purpose. Each one is documented and visible in the
 | A dispute may push available below zero (A6) | the platform can lose money (friendly fraud) | the spec says disputed funds are held | the account is flagged high-risk and counted, and can't withdraw while negative |
 | Extra decimal places are cut (A10) | a partner sending 5 decimals loses a fraction of 0.0001 | never moving more money than asked is safer than rounding up | counted in `amounts_truncated_total` |
 | A failed commit skips the transaction | the transaction is lost | there's no retry mechanism yet | counted in `store_errors_total`; retries are future work |
-| A locked account stays locked (A4) | a frozen client can't recover | the spec freezes the account and defines no unlock | — |
+| A locked account stays locked and rejects deposits (A4) | a frozen client can't recover, and one who owes money (A6) can't pay it back through the engine | the spec freezes the account and defines no unlock | disputes still go through, so the records stay right; the debt is recovered outside the engine |
 | Release builds skip the debug assertions | a bug could write wrong balances unnoticed | Rust's convention for release builds | the property tests check every invariant, and `cargo run` keeps the assertions on |
 
 ## Assumptions
@@ -535,12 +535,32 @@ transaction, the row is rejected as `client_mismatch`.
 **Why.** Otherwise one client could dispute another client's transaction. It also means a
 transaction only ever touches its own client's account (see [Future work](#future-work)).
 
-### A4. A locked account rejects everything
+### A4. A locked account rejects deposits and withdrawals
 
-After a chargeback, every later transaction for that client is rejected as `account_locked`:
-deposits, withdrawals, disputes, resolves and chargebacks.
+After a chargeback, every later deposit and withdrawal for that client is rejected as
+`account_locked`. Disputes, resolves and chargebacks still go through, including disputes opened
+after the lock.
 
 **Why.** The spec says the account is "immediately frozen", and nothing in it unlocks an account.
+A freeze stops the client from moving money, and that's what deposits and withdrawals are.
+Disputes, resolves and chargebacks are the dispute process, run by the partner or the bank: the
+money moves (or doesn't) outside the engine either way. Rejecting them wouldn't stop anything; it
+would only make the records wrong. For example, a client deposits 100 (tx 1) and 50 (tx 2), both
+are disputed, and tx 1 is charged back, which locks the account:
+
+- If the resolve of tx 2 were rejected, its 50 would stay held forever: it could never be
+  released or charged back.
+- If the bank then disputed and charged back tx 2 and we rejected both, the account would still
+  show 50 the bank has already taken back.
+
+None of them lets the client take money out: a dispute holds funds, a resolve releases them into an
+account that can't withdraw, and a chargeback removes them. The spec calls a dispute "a client's
+claim", but it reaches us through the partner after the bank has opened it, and accepting it only
+moves money into `held`, the safe direction.
+
+**A consequence.** A client whose available balance is negative (A6) and whose account gets locked
+can't pay that debt back through the engine, because deposits are rejected. The platform has to
+recover it outside the engine.
 
 ### A5. A resolved transaction can't be disputed again (for now)
 
@@ -566,7 +586,8 @@ are fixed by the spec.
 **Why.** This is the pattern of "friendly fraud": the client gets the money once through the
 withdrawal and again through the chargeback, and the platform takes the loss. Blocking it isn't the
 engine's job, but it must be visible. With available below zero, every withdrawal already fails for
-insufficient funds, and deposits still go through (they pay down what the client owes).
+insufficient funds, and deposits still go through (they pay down what the client owes), unless the
+account is locked (A4).
 
 ### A7. Transaction ids are unique, even for rejected transactions
 
@@ -644,7 +665,8 @@ are weighted so that disputes, resolves and chargebacks usually point at real tr
 5. A withdrawal never makes `available` negative. Only a dispute can (A6).
 6. A rejected transaction changes no balance and no transaction state. Its only writes are
    creating a new client (A9) and recording a rejected deposit/withdrawal (A7).
-7. A locked account never changes again.
+7. A locked account stays locked, and only an applied dispute, resolve or chargeback can change it
+   (A4).
 8. A transaction's state only moves `Normal → Disputed → Resolved | ChargedBack`. Final states and
    rejected transactions never change.
 9. Every row is counted exactly once:

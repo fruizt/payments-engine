@@ -33,3 +33,15 @@ pub fn locked_account(client: ClientId) -> Account {
     let (account, deposit) = take(account, deposit, Event::Dispute);
     take(account, deposit, Event::Chargeback).0
 }
+
+/// A client with two deposits, 10.0 (tx 1) and 5.0 (tx 2), after tx 1 was disputed and charged
+/// back: the account is locked with 5.0 available. Returns the account, tx 1 (charged back) and
+/// tx 2 (still normal).
+pub fn locked_after_chargeback(client: ClientId) -> (Account, StoredTx, StoredTx) {
+    let (account, first) = funded(client, 1, "10");
+    let (account, second) =
+        lifecycle::open(account, TxKind::Deposit, TxId(2), amount("5")).expect("deposit fits");
+    let (account, first) = take(account, first, Event::Dispute);
+    let (account, first) = take(account, first, Event::Chargeback);
+    (account, first, second)
+}
