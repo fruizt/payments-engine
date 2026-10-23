@@ -1,0 +1,4 @@
+ Client , TYPE , Amount , TX 
+ 1 , DEPOSIT , 2.5 , 1
+ 1 , Withdrawal , 1.23456 , 2
+2,deposit,3,3

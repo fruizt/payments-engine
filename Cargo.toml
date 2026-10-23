@@ -1,0 +1,16 @@
+[package]
+name = "payments-engine"
+version = "0.1.0"
+edition = "2024"
+description = "A small payments engine: transactions CSV in, client accounts CSV out."
+publish = false
+
+[dependencies]
+csv = "1.4.0"
+rust_decimal = { version = "1.43.0", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+proptest = "1.12.0"
