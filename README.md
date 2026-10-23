@@ -284,14 +284,20 @@ scale. Which accounts are high-risk is kept on the account record in the datasto
 For the example input above, stderr shows:
 
 ```
+# HELP rows_read_total Rows read from the input.
 # TYPE rows_read_total counter
 rows_read_total 5
+# HELP transactions_applied_total Transactions that went through, by type.
 # TYPE transactions_applied_total counter
 transactions_applied_total{type="deposit"} 3
 transactions_applied_total{type="withdrawal"} 1
+# HELP transactions_rejected_total Transactions refused by the rules, by type and reason.
 # TYPE transactions_rejected_total counter
 transactions_rejected_total{type="withdrawal",reason="insufficient_funds"} 1
 ```
+
+Metrics are printed in the order of the table above, each one's series sorted by their labels.
+A metric with nothing to count is left out.
 
 ### Error cases
 
