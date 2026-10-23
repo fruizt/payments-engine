@@ -13,8 +13,9 @@ cargo run -- transactions.csv > accounts.csv
 - **Input:** the path to a CSV file is the first and only argument.
 - **Output:** the accounts CSV goes to **stdout**. Metrics go to **stderr**, so they never mix
   with the CSV.
-- **Exit code:** `0` when the file was processed, even if some rows were rejected. Non-zero only
-  when the input can't be read or the output can't be written (see [A14](#a14-only-inputoutput-failures-can-stop-the-run)).
+- **Exit code:** `0` when the file was processed, even if some rows were rejected; `1` when the
+  input can't be read or the output can't be written; `2` when the arguments are wrong (see
+  [A14](#a14-only-inputoutput-failures-can-stop-the-run)).
 
 ### Input
 
