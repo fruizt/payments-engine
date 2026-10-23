@@ -6,6 +6,8 @@
 //! - `1`: the input can't be read, or the output can't be written;
 //! - `2`: the arguments are wrong.
 
+#![forbid(unsafe_code)]
+
 use std::env;
 use std::fs::File;
 use std::io;

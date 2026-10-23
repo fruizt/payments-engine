@@ -3,6 +3,8 @@
 //!
 //! The design, and the assumptions (A1-A14) cited throughout the code, are in the README.
 
+#![forbid(unsafe_code)]
+
 pub mod datastore;
 pub mod domain;
 pub mod engine;
