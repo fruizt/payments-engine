@@ -1,8 +1,34 @@
 # payments-engine
 
-A small payments engine in Rust. It reads a CSV of transactions (deposits, withdrawals, disputes,
-resolves and chargebacks), applies them to client accounts one at a time, and prints the final
-state of every account as CSV.
+A payments engine in Rust. It reads a CSV of transactions (deposits, withdrawals, disputes,
+resolves and chargebacks), applies them to client accounts one at a time and in order, and writes
+the final state of every account as CSV.
+
+- **Streams the input.** One row at a time, never the whole file: a release build handles 2
+  million rows in 1.6 s.
+- **Fails open, row by row.** A bad row or a refused transaction is counted in Prometheus-style
+  metrics, and the run goes on. Only an unreadable input or an unwritable output stops it.
+- **One source of truth.** A single module decides every state change of a transaction and every
+  balance change, and the compiler makes sure nothing else can.
+- **All or nothing.** Everything one transaction writes is committed in one atomic step.
+- **Exact money.** Decimals, never floating point. Extra decimal places are cut, never rounded up.
+- **Tested.** 135 tests, including one per documented assumption and property tests that check 10
+  invariants after every step.
+
+## Contents
+
+- [Usage](#usage): [Input](#input) · [Output](#output) · [Build profiles](#build-profiles)
+- [Design](#design): [Principles](#principles) · [Project layout](#project-layout) ·
+  [How one row flows through](#how-one-row-flows-through) · [Transactions](#transactions) ·
+  [Transaction lifecycle](#transaction-lifecycle) · [Datastore](#datastore) ·
+  [Atomic writes](#atomic-writes) · [Metrics](#metrics)
+- [Safety and error handling](#safety-and-error-handling):
+  [All errors at a glance](#all-errors-at-a-glance) · [Fatal errors](#fatal-errors) ·
+  [Parse errors](#parse-errors) · [Rejections](#rejections) · [Store errors](#store-errors) ·
+  [Bugs](#bugs) · [Other safeguards](#other-safeguards) · [Deliberate risks](#deliberate-risks)
+- [Assumptions](#assumptions): A1–A14, the cases the spec leaves open
+- [Invariants](#invariants) · [Testing](#testing) · [Dependencies](#dependencies) ·
+  [Future work](#future-work)
 
 ## Usage
 
@@ -15,7 +41,7 @@ cargo run -- transactions.csv > accounts.csv
   with the CSV.
 - **Exit code:** `0` when the file was processed, even if some rows were rejected; `1` when the
   input can't be read or the output can't be written; `2` when the arguments are wrong (see
-  [A14](#a14-only-inputoutput-failures-can-stop-the-run)).
+  [Fatal errors](#fatal-errors)).
 
 ### Input
 
@@ -325,12 +351,39 @@ transactions_rejected_total{type="withdrawal",reason="insufficient_funds"} 1
 Metrics are printed in the order of the table above, each one's series sorted by their labels.
 A metric with nothing to count is left out.
 
-### Error cases
+## Safety and error handling
 
-Every failure has its own enum variant and its own metric label. Each variant maps to its label
-through a `match` that must cover every variant, so a new error case without a label won't compile.
+Only problems with the input or the output stop a run. Everything else is handled per row: it's
+counted under its own name, and the run goes on with the next row. Every error case has its own
+enum variant and its own metric label. Each variant maps to its label through a `match` that must
+cover every variant, so a new error case without a label doesn't compile.
 
-**Parse errors.** The row never becomes a transaction.
+### All errors at a glance
+
+| Level | Cases | Example | What happens | Run goes on? | Counted in |
+|---|---|---|---|---|---|
+| [Fatal](#fatal-errors) | 5 | the input file doesn't exist | error on stderr, exit code `1` or `2` | no | — |
+| [Parse error](#parse-errors) | 8 | `deposit,1,1,abc` | the row has no effect at all (A8) | yes | `rows_parse_failed_total{reason}` |
+| [Rejection](#rejections) | 12 | a withdrawal larger than the available funds | no balance or state changes; only a new client (A9) and a rejected record (A7) can be written | yes | `transactions_rejected_total{type, reason}` |
+| [Store error](#store-errors) | 3 | the database can't be reached | the transaction isn't applied and nothing is written | yes | `store_errors_total` |
+| [Bug](#bugs) | — | held funds going negative | debug builds stop at the broken invariant | no | — |
+
+### Fatal errors
+
+The run stops with a message on stderr and a non-zero exit code (A14). Once the file is open, the
+metrics collected so far are still printed.
+
+| Error | Example | Message | Exit code |
+|---|---|---|---|
+| Wrong arguments | no file, or two files | `usage: payments-engine <transactions.csv>` | `2` |
+| The input can't be opened | the file doesn't exist | `error: can't open <path>: <reason>` | `1` |
+| The input can't be read | a read error halfway through, a header that isn't UTF-8 | `error: can't read the input: <reason>` | `1` |
+| The output can't be written | stdout is a closed pipe | `error: can't write the output: <reason>` | `1` |
+| The accounts can't be read at the end | a store failure (can't happen with the in-memory store) | `error: can't read the accounts: <reason>` | `1` |
+
+### Parse errors
+
+The row never becomes a transaction. It doesn't create its client or take its tx id (A8).
 
 | Reason | Meaning |
 |---|---|
@@ -346,7 +399,11 @@ through a `match` that must cover every variant, so a new error case without a l
 Fields are checked in the order type, client, tx, amount, so a row with several broken fields is
 counted once, under the first one.
 
-**Rejections.** A valid transaction that the rules refuse.
+### Rejections
+
+A valid transaction that the rules refuse. No balance and no transaction state changes. The only
+writes are creating a new client (A9) and recording a rejected deposit or withdrawal, so its id
+stays taken (A7).
 
 | Reason | Applies to | Meaning |
 |---|---|---|
@@ -379,8 +436,66 @@ For dispute, resolve and chargeback, `not_disputable` and the state checks come 
 
 `already_charged_back` can't actually happen today: a chargeback locks the account, so any later
 row from that client stops at `account_locked` before the state check, and rows from other clients
-stop at `client_mismatch`. It's kept so the state check covers every state, and it becomes reachable if
-accounts can ever be unlocked.
+stop at `client_mismatch`. It's kept so the state check covers every state, and it becomes
+reachable if accounts can ever be unlocked.
+
+### Store errors
+
+The datastore itself failed: a system error, not the partner's fault. The transaction isn't
+applied, nothing is written ([Atomic writes](#atomic-writes)), it's counted in
+`store_errors_total`, and the run goes on with the next row. Retrying is
+[future work](#future-work).
+
+| Error | When | With the in-memory store |
+|---|---|---|
+| `DuplicateKey` | an insert uses a tx id that already exists, like a unique-key violation | can't happen: `verify` rejects duplicates first, so this is a second safety net |
+| `MissingRecord` | an update points at a record that doesn't exist | can't happen: an update always follows a read of that record |
+| `Unavailable` | the store can't be reached | never returned; it's there for a file or database backend |
+
+### Bugs
+
+A broken invariant is a bug in the engine, not bad input. Two kinds of checks look for one:
+
+- **Debug assertions** sit where an invariant could break: held funds going negative
+  (`Account::adjust`) and a step moving another client's money (`lifecycle::advance`). They stop
+  the program, because going on would write wrong balances. `cargo run` uses the debug profile, so
+  they're on by default; release builds leave them out, as Rust does by convention.
+- **Property tests** check all 10 [invariants](#invariants) after every step, on thousands of
+  random transaction sequences.
+
+### Other safeguards
+
+- **No unsafe code.** `#![forbid(unsafe_code)]` in both the library and the binary, so none can
+  be added by accident.
+- **No panics on bad input.** Outside the tests there's no `unwrap`, `expect` or `panic!`. Every
+  field from the input is parsed into a type that can't hold an invalid value, and every way that
+  can fail is a named error. What's left are index lookups in the in-memory store on positions the
+  store itself just checked, and arithmetic whose inputs are bounded first.
+- **Valid by construction.** `ClientId` and `TxId` can't be mixed up. An `Amount` only comes from
+  `Amount::parse`, so it's always positive, with at most 4 decimal places and at most 10^24. A
+  `Verified` only comes from `verify`, and a stored transaction or a lifecycle step only from the
+  [lifecycle](#transaction-lifecycle).
+- **Exact money.** Amounts and balances stay within ±10^24, so decimal arithmetic is always exact,
+  and every balance change is overflow-checked (`balance_overflow`).
+- **All or nothing.** Each transaction writes its changes in one atomic commit
+  ([Atomic writes](#atomic-writes)).
+- **Bounded work per row.** The input is streamed through one reused buffer; memory grows only
+  with the stored transactions ([Future work](#future-work)).
+- **Small surface.** Four widely used dependencies. The program reads one file and writes to
+  stdout and stderr, nothing else.
+
+### Deliberate risks
+
+Some choices accept a risk on purpose. Each one is documented and visible in the metrics.
+
+| Choice | Risk | Why | Mitigation |
+|---|---|---|---|
+| Rows fail open | a bad row is easy to miss | one bad row shouldn't block a whole batch | every skipped row is counted by reason |
+| A dispute may push available below zero (A6) | the platform can lose money (friendly fraud) | the spec says disputed funds are held | the account is flagged high-risk and counted, and can't withdraw while negative |
+| Extra decimal places are cut (A10) | a partner sending 5 decimals loses a fraction of 0.0001 | never moving more money than asked is safer than rounding up | counted in `amounts_truncated_total` |
+| A failed commit skips the transaction | the transaction is lost | there's no retry mechanism yet | counted in `store_errors_total`; retries are future work |
+| A locked account stays locked (A4) | a frozen client can't recover | the spec freezes the account and defines no unlock | — |
+| Release builds skip the debug assertions | a bug could write wrong balances unnoticed | Rust's convention for release builds | the property tests check every invariant, and `cargo run` keeps the assertions on |
 
 ## Assumptions
 
