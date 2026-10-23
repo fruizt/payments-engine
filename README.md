@@ -471,7 +471,9 @@ example has spaces after the commas.
 
 ### A13. The header row is required
 
-Columns are matched by header name.
+Columns are matched by header name, ignoring case and surrounding spaces, so their order doesn't
+matter. Without a header row, the first row is taken as the header and the other rows fail with
+`unknown_type`, since none of them has a `type` column.
 
 ### A14. Only input/output failures can stop the run
 
