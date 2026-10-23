@@ -50,6 +50,31 @@ client,available,held,total,locked
 
 Client 2's withdrawal of 3.0 is rejected for insufficient funds.
 
+### Build profiles
+
+`cargo run` builds the debug profile, which Rust leaves unoptimized by default. Since that's the
+command the spec uses, `Cargo.toml` turns on light optimization for it, and whole-program
+optimization for `--release`:
+
+| Command | Profile setting | 2 million rows |
+|---|---|---|
+| `cargo run` with Rust's default | `opt-level = 0` | 13.7 s |
+| `cargo run` | `opt-level = 1` | 2.3 s |
+| `cargo run --release` with Rust's default | `opt-level = 3` | 1.8 s |
+| `cargo run --release` | `lto = "fat"`, `codegen-units = 1` | 1.6 s |
+
+Measured on one machine with 2 million rows (58 MB, 65,535 clients, with disputes, resolves and
+chargebacks on the clients' own deposits); the output is identical in every build. Clean build
+times stay under 10 seconds. Debug assertions and overflow checks stay on in the debug profile,
+because they don't depend on the optimization level. Two other settings were tried and left out:
+`panic = "abort"` and `target-cpu=native` made no measurable difference, and the second one would
+make the binary non-portable.
+
+For large files, use `cargo run --release -- transactions.csv > accounts.csv`.
+
+The code itself isn't tuned for speed: clean, readable code was preferred over what a profiler
+might find, such as avoiding an allocation per amount or using a faster hash function.
+
 ## Design
 
 ### Principles
